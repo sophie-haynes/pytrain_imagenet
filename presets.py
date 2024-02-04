@@ -84,8 +84,8 @@ class ClassificationGreyTrain:
         self,
         *,
         crop_size,
-        mean=(0.449),
-        std=(0.236),
+        mean=(0.449,0.449,0.449),
+        std=(0.236,0.236,0.236),
         interpolation=InterpolationMode.BILINEAR,
         hflip_prob=0.5,
         auto_augment_policy=None,
@@ -104,7 +104,7 @@ class ClassificationGreyTrain:
         elif backend != "pil":
             raise ValueError(f"backend can be 'tensor' or 'pil', but got {backend}")
 
-        transforms.append(T.Grayscale(num_output_channels=1))
+        transforms.append(T.Grayscale(num_output_channels=3))
         transforms.append(T.RandomResizedCrop(crop_size, interpolation=interpolation, antialias=True))
         if hflip_prob > 0:
             transforms.append(T.RandomHorizontalFlip(hflip_prob))
@@ -186,8 +186,8 @@ class ClassificationGreyEval:
         *,
         crop_size,
         resize_size=256,
-        mean=(0.449),
-        std=(0.236),
+        mean=(0.449,0.449,0.449),
+        std=(0.236, 0.236, 0.236),
         interpolation=InterpolationMode.BILINEAR,
         backend="pil",
         use_v2=False,
@@ -201,7 +201,7 @@ class ClassificationGreyEval:
             raise ValueError(f"backend can be 'tensor' or 'pil', but got {backend}")
 
         transforms += [
-            T.Grayscale(num_output_channels=1),
+            T.Grayscale(num_output_channels=3),
             T.Resize(resize_size, interpolation=interpolation, antialias=True),
             T.CenterCrop(crop_size),
         ]
