@@ -1,3 +1,5 @@
+*Source: https://github.com/pytorch/vision/blob/main/references/classification*
+
 # Image classification reference training scripts
 
 This folder contains reference training scripts for image classification.
