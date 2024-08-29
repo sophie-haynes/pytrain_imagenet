@@ -150,6 +150,20 @@ def load_data(traindir, valdir, args):
                     use_v2=args.use_v2,
                 ),
             )
+        elif args.single_channel_grey:
+            dataset = torchvision.datasets.ImageFolder(
+                traindir,
+                presets.ClassificationSingleChannelGreyTrain(
+                    crop_size=train_crop_size,
+                    interpolation=interpolation,
+                    auto_augment_policy=auto_augment_policy,
+                    random_erase_prob=random_erase_prob,
+                    ra_magnitude=ra_magnitude,
+                    augmix_severity=augmix_severity,
+                    backend=args.backend,
+                    use_v2=args.use_v2,
+                ),
+            )
         else:
             dataset = torchvision.datasets.ImageFolder(
                 traindir,
@@ -193,6 +207,14 @@ def load_data(traindir, valdir, args):
                     backend=args.backend,
                     use_v2=args.use_v2,
                 )
+            elif args.single_channel_grey:
+                preprocessing = presets.ClassificationSingleChannelGreyEval(
+                    crop_size=val_crop_size,
+                    resize_size=val_resize_size,
+                    interpolation=interpolation,
+                    backend=args.backend,
+                    use_v2=args.use_v2,
+                )
             else:
                 preprocessing = presets.ClassificationPresetEval(
                     crop_size=val_crop_size,
@@ -224,6 +246,47 @@ def load_data(traindir, valdir, args):
 
     return dataset, dataset_test, train_sampler, test_sampler
 
+def convert_to_single_channel(model):
+    """
+    Modifies the first convolutional layer of a given model to accept single-channel input.
+    
+    Args:
+        model (torch.nn.Module): The model to be modified.
+        
+    Returns:
+        torch.nn.Module: The modified model with a single-channel input.
+    """
+    # Identify the first convolutional layer
+    conv1 = None
+    for name, layer in model.named_modules():
+        if isinstance(layer, nn.Conv2d):
+            conv1 = layer
+            conv1_name = name
+            break
+    
+    if conv1 is None:
+        raise ValueError("The model does not have a Conv2D layer.")
+    
+    # Create a new convolutional layer with the same parameters except for the input channels
+    new_conv1 = nn.Conv2d(
+        in_channels=1,  # Change input channels to 1
+        out_channels=conv1.out_channels,
+        kernel_size=conv1.kernel_size,
+        stride=conv1.stride,
+        padding=conv1.padding,
+        bias=conv1.bias is not None
+    )
+    
+    # Replace the old conv1 layer with the new one
+    def recursive_setattr(model, attr, value):
+        attr_list = attr.split('.')
+        for attr_name in attr_list[:-1]:
+            model = getattr(model, attr_name)
+        setattr(model, attr_list[-1], value)
+    
+    recursive_setattr(model, conv1_name, new_conv1)
+    
+    return model
 
 def main(args):
     if args.output_dir:
@@ -270,6 +333,9 @@ def main(args):
 
     print("Creating model")
     model = torchvision.models.get_model(args.model, weights=args.weights, num_classes=num_classes)
+    if args.single_channel_grey:
+        # modify input to support single-channel
+        model = convert_to_single_channel(model)
     model.to(device)
 
     if args.distributed and args.sync_bn:
@@ -545,6 +611,7 @@ def get_args_parser(add_help=True):
     parser.add_argument("--backend", default="PIL", type=str.lower, help="PIL or tensor - case insensitive")
     parser.add_argument("--use-v2", action="store_true", help="Use V2 transforms")
     parser.add_argument("--grey", action="store_true", help="Use Greyscale Transformations")
+    parser.add_argument("--single_channel_grey", action="store_true", help="Use Single Channel Grey Transformations")
     return parser
 
 
