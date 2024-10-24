@@ -281,6 +281,9 @@ class ClassificationGreyEval:
             transforms.append(T.ToPureTensor())
 
         self.transforms = T.Compose(transforms)
+    
+    def __call__(self, img):
+        return self.transforms(img)
 
 class ClassificationSingleChannelGreyEval:
     def __init__(
