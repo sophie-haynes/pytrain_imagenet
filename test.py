@@ -1,21 +1,31 @@
+import csv
 import os
 from presets import ClassificationGreyEval, ClassificationPresetEval
+from sklearn.metrics import roc_auc_score
 from torch import load as weight_load
 from torch import device as pytorch_device
-from torch import inference_mode
+from torch import arange, cat, inference_mode, round, tensor
 from torch.backends.cudnn import benchmark, deterministic
 from torch.nn import CrossEntropyLoss
+from torch.nn.functional import softmax
 from torch.utils.data import SequentialSampler, DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.models import get_model
 from torchvision.transforms.functional import InterpolationMode
 import utils
 
-valdir = "/home/local/data/sophie/imagenet/val"
-pth_dir = "/home/local/data/sophie/imagenet/output/base"
+from torcheval.metrics import MulticlassAUROC, MulticlassAccuracy, MulticlassAUPRC, MulticlassF1Score
 
-start_epoch = 0
-epochs = 89
+test_model = "grey" #"base"
+valdir = "/home/local/data/sophie/imagenet/val"
+# pth_dir = "/home/local/data/sophie/imagenet/output/{}".format(test_model)
+# start_epoch = 89
+# epochs = 90
+pth_dir = "/home/local/data/sophie/imagenet/output/{}/continued".format(test_model)
+start_epoch = 90
+epochs = 120
+
+output_csv = "/home/local/data/sophie/imagenet/output/{}_results.csv".format(test_model)
 val_crop_size = 224
 val_resize_size = 256
 batch_size = 32
@@ -29,50 +39,50 @@ grey = True if "grey" in pth_dir else False
 device = pytorch_device("cuda")
 
 
-
-
 def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix=""):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = f"Test: {log_suffix}"
-
+    roc_output = tensor([])
+    roc_target = tensor([])
     num_processed_samples = 0
+    auroc = MulticlassAUROC(num_classes=1000,device=device)
+    f1 = MulticlassF1Score(num_classes=1000,device=device)
+    auprc = MulticlassAUPRC(num_classes=1000,device=device)
+    multiacc = MulticlassAccuracy(num_classes=1000, device=device)
     with inference_mode():
         for image, target in metric_logger.log_every(data_loader, print_freq, header):
             image = image.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             output = model(image)
             loss = criterion(output, target)
-
             acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
-
+            # roc_auc = roc_auc_score(target.cpu(), \
+            #     torch.nn.functional.softmax(output.cpu(), dim=1) / torch.nn.functional.softmax(output.cpu(), dim=1).sum(dim=1, keepdim=True), \
+            #     multi_class='ovo', labels=torch.arange(0,1000))
+            # roc_output = cat((roc_output, output.cpu()),0)
+            # roc_target = cat((roc_target, target.cpu()),0)
+            # auroc.update(output, target)
+            # f1.update(output, target)
+            auprc.update(output, target)
+            # multiacc.update(output, target)
             # FIXME need to take into account that the datasets
             # could have been padded in distributed setup
             batch_size = image.shape[0]
             metric_logger.update(loss=loss.item())
             metric_logger.meters["acc1"].update(acc1.item(), n=batch_size)
             metric_logger.meters["acc5"].update(acc5.item(), n=batch_size)
+            # print("auroc: {} ".format( auroc.compute()))
+            # metric_logger.meters["auroc"].update(roc_auc.item(), n=batch_size)
             num_processed_samples += batch_size
-    # gather the stats from all processes
-
-    num_processed_samples = utils.reduce_across_processes(num_processed_samples)
-    if (
-        hasattr(data_loader.dataset, "__len__")
-        and len(data_loader.dataset) != num_processed_samples
-        and torch.distributed.get_rank() == 0
-    ):
-        # See FIXME above
-        warnings.warn(
-            f"It looks like the dataset has {len(data_loader.dataset)} samples, but {num_processed_samples} "
-            "samples were used for the validation, which might bias the results. "
-            "Try adjusting the batch size and / or the world size. "
-            "Setting the world size to 1 is always a safe bet."
-        )
-
-    metric_logger.synchronize_between_processes()
-
-    print(f"{header} Acc@1 {metric_logger.acc1.global_avg:.3f} Acc@5 {metric_logger.acc5.global_avg:.3f}")
-    return metric_logger.acc1.global_avg, metric_logger.acc5.global_avg
+    # roc_auc = roc_auc_score(roc_target, softmax(roc_output, dim=1) / softmax(roc_output, dim=1).sum(dim=1, keepdim=True), multi_class='ovo', labels=arange(0,1000))
+    # avg_auroc = auroc.compute().item()
+    # avg_f1 = f1.compute().item()
+    avg_auprc = auprc.compute().item()
+    # avg_multiacc = multiacc.compute().item()
+    # metric_logger.meters["auroc"].update(roc_auc.item(), n=num_processed_samples)
+    print(f"{header} Acc@1 {metric_logger.acc1.global_avg:.3f} Acc@5 {metric_logger.acc5.global_avg:.3f} AUPRC {avg_auprc} ")#AUROC {metric_logger.auroc.global_avg:.3f}")
+    return metric_logger.acc1.global_avg, metric_logger.acc5.global_avg, avg_auprc#, metric_logger.auroc.global_avg
 
 # create preprocessing transforms
 if grey:
@@ -114,8 +124,16 @@ criterion = CrossEntropyLoss(label_smoothing=0.0)
 model = get_model(architecture, weights=weights,
     num_classes=num_classes)
 
+fieldnames = ['Epoch', 'AP', 'Top1', 'Top5']
+
+# with open(output_csv, 'w', newline='') as csvfile:
+#     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+#     writer.writeheader()
+
 for epoch in range(start_epoch, epochs):
     print("Epoch: {}/{} ==================================".format(epoch, epochs))
+    # print("Epoch: {}/{} ==================================".format(start_epoch, epochs))
+    # epoch = start_epoch
     model_without_ddp = model
     # load epoch weights
     weights = weight_load(os.path.join(pth_dir,"model_{}.pth".format(epoch)),
@@ -126,4 +144,9 @@ for epoch in range(start_epoch, epochs):
     # ensure results are consistent by disabling benchmarking
     benchmark = False
     deterministic = True
-    evaluate(model_without_ddp, criterion, data_loader_test, device=device, print_freq=1563)
+    acc1,acc5,auprc = evaluate(model_without_ddp, criterion, data_loader_test, device=device, print_freq=1563)
+    with open(output_csv, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writerows([
+            {'Epoch':epoch+1, 'AP':auprc, 'Top1':acc1, 'Top5':acc5},
+        ])
