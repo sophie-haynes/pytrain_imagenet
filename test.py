@@ -1,12 +1,12 @@
 import csv
 import os
-from presets import ClassificationGreyEval, ClassificationPresetEval
+from presets import ClassificationGreyEval, ClassificationPresetEval, ClassificationSingleChannelGreyEval
 from sklearn.metrics import roc_auc_score
 from torch import load as weight_load
 from torch import device as pytorch_device
 from torch import arange, cat, inference_mode, round, tensor
 from torch.backends.cudnn import benchmark, deterministic
-from torch.nn import CrossEntropyLoss
+from torch.nn import Conv2d, CrossEntropyLoss
 from torch.nn.functional import softmax
 from torch.utils.data import SequentialSampler, DataLoader
 from torchvision.datasets import ImageFolder
@@ -16,14 +16,14 @@ import utils
 
 from torcheval.metrics import MulticlassAUROC, MulticlassAccuracy, MulticlassAUPRC, MulticlassF1Score
 
-test_model = "grey" #"base"
+test_model = "base" #"single" #"grey"
 valdir = "/home/local/data/sophie/imagenet/val"
 # pth_dir = "/home/local/data/sophie/imagenet/output/{}".format(test_model)
-# start_epoch = 89
-# epochs = 90
+start_epoch = 130
+epochs = 138
 pth_dir = "/home/local/data/sophie/imagenet/output/{}/continued".format(test_model)
-start_epoch = 90
-epochs = 120
+# start_epoch = 120
+# epochs = 122
 
 output_csv = "/home/local/data/sophie/imagenet/output/{}_results.csv".format(test_model)
 val_crop_size = 224
@@ -36,8 +36,50 @@ usev2 = False
 architecture = "resnet50"
 weights = None
 grey = True if "grey" in pth_dir else False
+single = True if "single" in pth_dir else False
 device = pytorch_device("cuda")
 
+def convert_to_single_channel(model):
+    """
+    Modifies the first convolutional layer of a given model to accept single-channel input.
+
+    Args:
+        model (torch.nn.Module): The model to be modified.
+
+    Returns:
+        torch.nn.Module: The modified model with a single-channel input.
+    """
+    # Identify the first convolutional layer
+    conv1 = None
+    for name, layer in model.named_modules():
+        if isinstance(layer, Conv2d):
+            conv1 = layer
+            conv1_name = name
+            break
+
+    if conv1 is None:
+        raise ValueError("The model does not have a Conv2D layer.")
+
+    # Create a new convolutional layer with the same parameters except for the input channels
+    new_conv1 = Conv2d(
+        in_channels=1,  # Change input channels to 1
+        out_channels=conv1.out_channels,
+        kernel_size=conv1.kernel_size,
+        stride=conv1.stride,
+        padding=conv1.padding,
+        bias=conv1.bias is not None
+    )
+
+    # Replace the old conv1 layer with the new one
+    def recursive_setattr(model, attr, value):
+        attr_list = attr.split('.')
+        for attr_name in attr_list[:-1]:
+            model = getattr(model, attr_name)
+        setattr(model, attr_list[-1], value)
+
+    recursive_setattr(model, conv1_name, new_conv1)
+
+    return model
 
 def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix=""):
     model.eval()
@@ -93,6 +135,14 @@ if grey:
         backend=backend,
         use_v2=usev2,
     )
+elif single:
+    preprocessing = ClassificationSingleChannelGreyEval(
+        crop_size=val_crop_size,
+        resize_size=val_resize_size,
+        interpolation=interpolation,
+        backend=backend,
+        use_v2=usev2,
+    )
 else:
     preprocessing = ClassificationPresetEval(
         crop_size=val_crop_size,
@@ -123,7 +173,8 @@ criterion = CrossEntropyLoss(label_smoothing=0.0)
 
 model = get_model(architecture, weights=weights,
     num_classes=num_classes)
-
+if single:
+    model = convert_to_single_channel(model)
 fieldnames = ['Epoch', 'AP', 'Top1', 'Top5']
 
 # with open(output_csv, 'w', newline='') as csvfile:
