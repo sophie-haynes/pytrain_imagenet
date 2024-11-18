@@ -19,13 +19,15 @@ from torcheval.metrics import MulticlassAUROC, MulticlassAccuracy, MulticlassAUP
 test_model = "base" #"single" #"grey"
 valdir = "/home/local/data/sophie/imagenet/val"
 # pth_dir = "/home/local/data/sophie/imagenet/output/{}".format(test_model)
-start_epoch = 130
-epochs = 138
-pth_dir = "/home/local/data/sophie/imagenet/output/{}/continued".format(test_model)
+# start_epoch = 0
+start_epoch = 70
+epochs = 73
+# pth_dir = "/home/local/data/sophie/imagenet/output/{}/continued".format(test_model)
+pth_dir = "/home/local/data/sophie/imagenet/output/FullGPU/{}".format(test_model)
 # start_epoch = 120
 # epochs = 122
 
-output_csv = "/home/local/data/sophie/imagenet/output/{}_results.csv".format(test_model)
+output_csv = "/home/local/data/sophie/imagenet/output/FullGPU/{}_results.csv".format(test_model)
 val_crop_size = 224
 val_resize_size = 256
 batch_size = 32
@@ -177,9 +179,10 @@ if single:
     model = convert_to_single_channel(model)
 fieldnames = ['Epoch', 'AP', 'Top1', 'Top5']
 
-# with open(output_csv, 'w', newline='') as csvfile:
-#     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-#     writer.writeheader()
+if start_epoch == 0:
+    with open(output_csv, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
 
 for epoch in range(start_epoch, epochs):
     print("Epoch: {}/{} ==================================".format(epoch, epochs))
